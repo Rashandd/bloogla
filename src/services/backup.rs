@@ -201,7 +201,7 @@ fn write_archive(database: &Path, uploads: &Path, archive: &Path) -> Result<(), 
         let options = SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Stored)
             .large_file(size >= u32::MAX as u64)
-            .unix_permissions(if name == "bloogla.db" { 0o600 } else { 0o644 });
+            .unix_permissions(0o600);
         zip.start_file(name, options).map_err(|e| error(&e))?;
         let mut source = std::fs::File::open(path).map_err(|e| error(&e))?;
         std::io::copy(&mut source, &mut zip).map_err(|e| error(&e))?;

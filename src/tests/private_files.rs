@@ -44,7 +44,10 @@ async fn databases_and_backup_archives_are_private_including_existing_files() {
         original,
         "backups cannot overwrite existing files"
     );
-    let archive = crate::services::backup::download_archive(&site.pool, &folder.join("uploads"))
+    let uploads = folder.join("uploads");
+    std::fs::create_dir_all(&uploads).unwrap();
+    std::fs::write(uploads.join("picture.png"), b"test picture").unwrap();
+    let archive = crate::services::backup::download_archive(&site.pool, &uploads)
         .await
         .unwrap();
     assert_eq!(mode(&archive), 0o600);
@@ -53,10 +56,14 @@ async fn databases_and_backup_archives_are_private_including_existing_files() {
         0o700
     );
     let mut zip = zip::ZipArchive::new(std::fs::File::open(&archive).unwrap()).unwrap();
-    assert_eq!(
-        zip.by_name("bloogla.db").unwrap().unix_mode().unwrap() & 0o777,
-        0o600
-    );
+    assert_eq!(zip.len(), 2);
+    // Permissions must not depend on the database's archive path.
+    for index in 0..zip.len() {
+        assert_eq!(
+            zip.by_index(index).unwrap().unix_mode().unwrap() & 0o777,
+            0o600
+        );
+    }
     drop(zip);
     std::fs::remove_file(archive).unwrap();
     std::fs::remove_dir_all(folder).unwrap();
