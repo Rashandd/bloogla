@@ -188,3 +188,45 @@ async fn password_changes_revoke_pending_two_factor_logins() {
     );
     assert_eq!(users::recovery_codes_left(&site.pool, me.id).await, 1);
 }
+#[tokio::test]
+async fn a_stale_password_change_cannot_replace_the_password_or_restore_its_session() {
+    let mut site = TestSite::with_owner().await;
+    let new_password = "Owner-New-Password-8";
+    let hash = crate::app::security::hash_password(new_password).unwrap();
+    let mut tx = site.pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    sqlx::query("UPDATE users SET password_hash = ?, session_version = session_version + 1")
+        .bind(&hash)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    // WAL readers can still check the old password while the owner holds
+    // this write lock. The conditional update must reject that stale result.
+    let request = site.post(
+        "/admin/profile/password",
+        &[
+            ("current_password", ADMIN_PASSWORD),
+            ("new_password", "Stale-Request-Password-9"),
+            ("confirm_password", "Stale-Request-Password-9"),
+        ],
+    );
+    let (result, _) = tokio::join!(request, async move {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        tx.commit().await.unwrap();
+    });
+    assert!(!result.body.contains("Password updated."));
+    assert_eq!(result.header("hx-redirect"), "/admin/login");
+    assert_eq!(result.status, axum::http::StatusCode::OK);
+    assert!(result.body.contains("Sign in"));
+    assert_eq!(site.get("/admin").await.location(), "/admin/login");
+    let (stored, version): (String, i64) =
+        sqlx::query_as("SELECT password_hash, session_version FROM users")
+            .fetch_one(&site.pool)
+            .await
+            .unwrap();
+    assert_eq!(stored, hash);
+    assert_eq!(version, 1);
+    assert_eq!(
+        site.sign_in(ADMIN_EMAIL, new_password).await.location(),
+        "/admin"
+    );
+}

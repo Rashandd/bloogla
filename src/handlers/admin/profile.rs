@@ -153,7 +153,11 @@ pub async fn update(
         }
         Ok(None) => {
             let _ = session.flush().await;
-            StatusCode::UNAUTHORIZED.into_response()
+            (
+                [("HX-Redirect", "/admin/login")],
+                alert(me.lang, "error", "Sign in"),
+            )
+                .into_response()
         }
         Err(e) => {
             tracing::error!("Failed to update profile: {e}");
@@ -229,7 +233,11 @@ pub async fn update_password(
         }
         Ok(None) => {
             let _ = session.flush().await;
-            Redirect::to("/admin/login").into_response()
+            (
+                [("HX-Redirect", "/admin/login")],
+                alert(me.lang, "error", "Sign in"),
+            )
+                .into_response()
         }
         Err(e) => {
             tracing::error!("Failed to update password: {e}");
