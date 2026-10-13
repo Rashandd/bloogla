@@ -103,6 +103,7 @@ pub async fn page(
 pub async fn update(
     State(state): State<AppState>,
     Extension(me): Extension<CurrentUser>,
+    session: Session,
     Form(form): Form<ProfileForm>,
 ) -> Response {
     let email = form.email.trim();
@@ -121,6 +122,7 @@ pub async fn update(
         return alert(me.lang, "error", "Someone else already uses this email.");
     }
 
+    let email_changed = email != me.email;
     let language = Lang::parse(&form.language).map_or("", Lang::code);
     let previous_language: String = or_log(
         sqlx::query_scalar("SELECT language FROM users WHERE id = ?")
@@ -129,20 +131,30 @@ pub async fn update(
             .await,
         "load language",
     );
-    match sqlx::query("UPDATE users SET name = ?, email = ?, language = ? WHERE id = ?")
-        .bind(form.name.trim())
-        .bind(email)
-        .bind(language)
-        .bind(me.id)
-        .execute(&state.pool)
+    match crate::db::users::update_profile(&state.pool, &me, form.name.trim(), email, language)
         .await
     {
-        // A new language applies to the whole page, so reload it.
-        Ok(_) if language != previous_language => {
-            let site_language = settings::load(&state.pool).await.language;
-            saved_and_reload(Lang::parse(language).unwrap_or(site_language))
+        Ok(Some(version)) => {
+            if email_changed {
+                log_event(
+                    "email_changed",
+                    &[("user", &me.email), ("new_email", email)],
+                );
+                super::auth::sign_in(&session, me.id, version).await;
+            }
+            // Reload after an address change too, to clear the confirmation
+            // field and show the saved address and session everywhere.
+            if language != previous_language || email_changed {
+                let site_language = settings::load(&state.pool).await.language;
+                saved_and_reload(Lang::parse(language).unwrap_or(site_language))
+            } else {
+                alert(me.lang, "success", "Saved.")
+            }
         }
-        Ok(_) => alert(me.lang, "success", "Saved."),
+        Ok(None) => {
+            let _ = session.flush().await;
+            StatusCode::UNAUTHORIZED.into_response()
+        }
         Err(e) => {
             tracing::error!("Failed to update profile: {e}");
             alert(
@@ -202,8 +214,10 @@ pub async fn update_password(
             "Couldn't change your password. Please try again.",
         );
     };
-    match crate::db::users::set_password(&state.pool, me.id, &hash).await {
-        Ok(new_version) => {
+    match crate::db::users::change_password(&state.pool, me.id, &hash, Some(me.session_version))
+        .await
+    {
+        Ok(Some(new_version)) => {
             log_event("password_changed", &[("user", &me.email)]);
             // Every other device is now signed out; this one stays signed in.
             crate::handlers::admin::auth::sign_in(&session, me.id, new_version).await;
@@ -212,6 +226,10 @@ pub async fn update_password(
                 "success",
                 "Password updated. Other devices have been signed out.",
             )
+        }
+        Ok(None) => {
+            let _ = session.flush().await;
+            Redirect::to("/admin/login").into_response()
         }
         Err(e) => {
             tracing::error!("Failed to update password: {e}");

@@ -46,6 +46,41 @@ pub async fn find(pool: &SqlitePool, id: i64) -> Option<CurrentUser> {
     Some(from_row(pool, row?).await)
 }
 
+/// Save a profile only while the session that authorized it is current.
+/// Changing the recovery address revokes older sessions and emailed links
+/// together, so neither can restore access under the old address.
+pub async fn update_profile(
+    pool: &SqlitePool,
+    me: &CurrentUser,
+    name: &str,
+    email: &str,
+    language: &str,
+) -> Result<Option<i64>, sqlx::Error> {
+    let email_changed = email != me.email;
+    let mut tx = pool.begin().await?;
+    let version = sqlx::query_scalar(
+        "UPDATE users SET name = ?, email = ?, language = ?, session_version = session_version + ?
+         WHERE id = ? AND session_version = ? AND email = ? RETURNING session_version",
+    )
+    .bind(name)
+    .bind(email)
+    .bind(language)
+    .bind(i64::from(email_changed))
+    .bind(me.id)
+    .bind(me.session_version)
+    .bind(&me.email)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if version.is_some() && email_changed {
+        sqlx::query("DELETE FROM password_resets WHERE user_id = ?")
+            .bind(me.id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(version)
+}
+
 /// Set a new password and sign the account out on every device.
 /// Returns the account's new session version.
 pub async fn set_password(
@@ -53,14 +88,76 @@ pub async fn set_password(
     id: i64,
     password_hash: &str,
 ) -> Result<i64, sqlx::Error> {
-    sqlx::query_scalar(
+    change_password(pool, id, password_hash, None)
+        .await?
+        .ok_or(sqlx::Error::RowNotFound)
+}
+
+/// Change a password only if the session that checked the old password is
+/// still current. A concurrent reset must win over this stale request.
+pub async fn change_password(
+    pool: &SqlitePool,
+    id: i64,
+    password_hash: &str,
+    expected_version: Option<i64>,
+) -> Result<Option<i64>, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let version = sqlx::query_scalar(
         "UPDATE users SET password_hash = ?, session_version = session_version + 1
-         WHERE id = ? RETURNING session_version",
+         WHERE id = ? AND (? IS NULL OR session_version = ?) RETURNING session_version",
     )
     .bind(password_hash)
     .bind(id)
-    .fetch_one(pool)
-    .await
+    .bind(expected_version)
+    .bind(expected_version)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if version.is_some() {
+        // An older emailed link must never undo an ordinary or administrator
+        // password change. Revocation and the change commit together.
+        sqlx::query("DELETE FROM password_resets WHERE user_id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(version)
+}
+
+/// Consume a valid reset link and change the password together. Only one
+/// request can claim the link; a failed update leaves it available to retry.
+pub async fn reset_password(
+    pool: &SqlitePool,
+    token_hash: &str,
+    password_hash: &str,
+) -> Result<Option<i64>, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    // The DELETE takes the write lock before checking the token, so concurrent
+    // requests cannot both read it as unused.
+    let user_id: Option<i64> = sqlx::query_scalar(
+        "DELETE FROM password_resets WHERE token_hash = ? AND expires_at > datetime('now')
+         RETURNING user_id",
+    )
+    .bind(token_hash)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(id) = user_id else {
+        tx.rollback().await?;
+        return Ok(None);
+    };
+    sqlx::query(
+        "UPDATE users SET password_hash = ?, session_version = session_version + 1 WHERE id = ?",
+    )
+    .bind(password_hash)
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM password_resets WHERE user_id = ?")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Some(id))
 }
 
 // ---- Two-factor login ----

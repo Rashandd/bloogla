@@ -2,6 +2,8 @@
 
 use super::{TestSite, ADMIN_EMAIL, ADMIN_PASSWORD, SETUP_CODE};
 use axum::http::StatusCode;
+use axum::{body::Body, http::Request};
+use tower::ServiceExt;
 
 #[tokio::test]
 async fn a_new_site_sends_everyone_to_setup() {
@@ -57,7 +59,7 @@ async fn admin_pages_need_signing_in() {
 
     assert_eq!(site.get("/admin/posts").await.location(), "/admin/login");
     let post = site.post("/admin/posts", &[("title", "Sneaky")]).await;
-    assert_eq!(post.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(post.location(), "/admin/login");
 }
 
 #[tokio::test]
@@ -130,6 +132,107 @@ async fn a_reset_link_sets_a_new_password_once() {
     assert_eq!(
         site.sign_in(ADMIN_EMAIL, new_password).await.location(),
         "/admin"
+    );
+}
+
+#[tokio::test]
+async fn concurrent_password_resets_use_the_link_only_once() {
+    let mut site = TestSite::with_owner().await;
+    let id: i64 = sqlx::query_scalar("SELECT id FROM users")
+        .fetch_one(&site.pool)
+        .await
+        .unwrap();
+    let token = crate::handlers::admin::password_reset::create_link(&site.pool, id)
+        .await
+        .unwrap();
+    let request = |password: &str| {
+        Request::post("/admin/reset-password")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .header("sec-fetch-site", "same-origin")
+            .body(Body::from(format!(
+                "token={token}&password={password}&confirm_password={password}"
+            )))
+            .unwrap()
+    };
+    let passwords = ["First-Strong-Password-9", "Other-Strong-Password-8"];
+    let (first, second) = tokio::join!(
+        site.app.clone().oneshot(request(passwords[0])),
+        site.app.clone().oneshot(request(passwords[1])),
+    );
+    let responses = [first.unwrap(), second.unwrap()];
+    assert_eq!(
+        responses
+            .iter()
+            .filter(|r| r.status() == StatusCode::SEE_OTHER)
+            .count(),
+        1
+    );
+    let winner = responses
+        .iter()
+        .position(|r| r.status() == StatusCode::SEE_OTHER)
+        .unwrap();
+    for response in responses {
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        if response.status() == StatusCode::SEE_OTHER {
+            assert_eq!(response.headers()["location"], "/admin/login?reset=1");
+        } else {
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert!(String::from_utf8_lossy(&bytes).contains("Links work once, for one hour."));
+        }
+    }
+    let version: i64 = sqlx::query_scalar("SELECT session_version FROM users WHERE id = ?")
+        .bind(id)
+        .fetch_one(&site.pool)
+        .await
+        .unwrap();
+    assert_eq!(version, 1, "the password was changed only once");
+    assert_eq!(site.get("/admin").await.location(), "/admin/login");
+    assert_eq!(
+        site.sign_in(ADMIN_EMAIL, passwords[winner])
+            .await
+            .location(),
+        "/admin"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_password_reset_keeps_the_link_available() {
+    let mut site = TestSite::with_owner().await;
+    let id: i64 = sqlx::query_scalar("SELECT id FROM users")
+        .fetch_one(&site.pool)
+        .await
+        .unwrap();
+    let token = crate::handlers::admin::password_reset::create_link(&site.pool, id)
+        .await
+        .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER refuse_password_change BEFORE UPDATE OF password_hash ON users
+         BEGIN SELECT RAISE(ABORT, 'test write failure'); END",
+    )
+    .execute(&site.pool)
+    .await
+    .unwrap();
+    let fields = [
+        ("token", token.as_str()),
+        ("password", "Another-Good-Password-7"),
+        ("confirm_password", "Another-Good-Password-7"),
+    ];
+    let failed = site.post("/admin/reset-password", &fields).await;
+    assert!(failed.body.contains("save the password. Please try again."));
+    assert!(site
+        .get(&format!("/admin/reset-password?token={token}"))
+        .await
+        .body
+        .contains("name=\"token\""));
+    sqlx::query("DROP TRIGGER refuse_password_change")
+        .execute(&site.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        site.post("/admin/reset-password", &fields).await.location(),
+        "/admin/login?reset=1"
     );
 }
 

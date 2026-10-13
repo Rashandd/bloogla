@@ -164,6 +164,7 @@ pub async fn login(
             let waiting = async {
                 session.cycle_id().await?;
                 session.insert(PENDING_USER_ID, user_id).await?;
+                session.insert(PENDING_VERSION, version).await?;
                 session.insert(PENDING_SINCE, unix_now()).await
             }
             .await;
@@ -193,6 +194,7 @@ pub async fn login(
 
 /// Session keys while the password was right but the code isn't entered yet.
 const PENDING_USER_ID: &str = "pending_user_id";
+const PENDING_VERSION: &str = "pending_version";
 const PENDING_SINCE: &str = "pending_since";
 /// How long the code page stays valid after the password.
 const PENDING_SECONDS: u64 = 5 * 60;
@@ -204,12 +206,31 @@ fn unix_now() -> u64 {
 }
 
 /// The account waiting for its code, if the password was entered recently.
-async fn pending_user(session: &Session) -> Option<i64> {
+async fn pending_user(state: &AppState, session: &Session) -> Option<(i64, i64)> {
     let since: u64 = session.get(PENDING_SINCE).await.ok().flatten()?;
     if unix_now().saturating_sub(since) > PENDING_SECONDS {
         return None;
     }
-    session.get(PENDING_USER_ID).await.ok().flatten()
+    let id: i64 = session.get(PENDING_USER_ID).await.ok().flatten()?;
+    let version: i64 = session.get(PENDING_VERSION).await.ok().flatten()?;
+    let current: Option<i64> = sqlx::query_scalar("SELECT session_version FROM users WHERE id = ?")
+        .bind(id)
+        .fetch_optional(&state.pool)
+        .await
+        .ok()?;
+    // A password change revokes the password already checked in the first
+    // step, as well as completed sign-ins.
+    if current != Some(version) {
+        clear_pending(session).await;
+        return None;
+    }
+    Some((id, version))
+}
+
+async fn clear_pending(session: &Session) {
+    let _ = session.remove::<i64>(PENDING_USER_ID).await;
+    let _ = session.remove::<i64>(PENDING_VERSION).await;
+    let _ = session.remove::<u64>(PENDING_SINCE).await;
 }
 
 #[derive(Template)]
@@ -226,7 +247,7 @@ pub struct CodeForm {
 
 /// GET /admin/login/code -> Ask for the code from the authenticator app.
 pub async fn code_page(State(state): State<AppState>, session: Session) -> Response {
-    if pending_user(&session).await.is_none() {
+    if pending_user(&state, &session).await.is_none() {
         return Redirect::to("/admin/login").into_response();
     }
     LoginCodeTemplate {
@@ -244,18 +265,17 @@ pub async fn check_code(
     session: Session,
     Form(form): Form<CodeForm>,
 ) -> Response {
-    let Some(user_id) = pending_user(&session).await else {
+    let Some((user_id, version)) = pending_user(&state, &session).await else {
         return Redirect::to("/admin/login").into_response();
     };
     let ip = crate::handlers::client_ip(&state, peer, &headers).to_string();
     let lang = settings::load(&state.pool).await.language;
-    let user: Option<(String, i64)> =
-        sqlx::query_as("SELECT email, session_version FROM users WHERE id = ?")
-            .bind(user_id)
-            .fetch_optional(&state.pool)
-            .await
-            .unwrap_or(None);
-    let Some((email, version)) = user else {
+    let user: Option<String> = sqlx::query_scalar("SELECT email FROM users WHERE id = ?")
+        .bind(user_id)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None);
+    let Some(email) = user else {
         return Redirect::to("/admin/login").into_response();
     };
     let email = email.to_lowercase();
@@ -305,8 +325,7 @@ pub async fn check_code(
     }
 
     failed_logins(|f| f.clear(&email));
-    let _ = session.remove::<i64>(PENDING_USER_ID).await;
-    let _ = session.remove::<u64>(PENDING_SINCE).await;
+    clear_pending(&session).await;
     log_event(
         "login",
         &[("user", &email), ("ip", &ip), ("two_factor", "yes")],

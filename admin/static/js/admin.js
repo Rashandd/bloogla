@@ -119,6 +119,12 @@ document.addEventListener("htmx:afterRequest", (event) => {
 
 // Forms the server rejects (422) come back with their messages: show them.
 document.addEventListener("htmx:beforeSwap", (event) => {
+    // Revoked sessions must take the person back to sign-in, even when a
+    // form was already open before their password or email changed.
+    if (event.detail.xhr.status === 401) {
+        location.assign("/admin/login");
+        return;
+    }
     if (event.detail.xhr.status === 422) {
         event.detail.shouldSwap = true;
         event.detail.isError = false;
