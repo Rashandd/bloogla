@@ -78,7 +78,11 @@ async fn email_changes_cancel_links_and_old_sessions() {
     let result = site
         .post(
             "/admin/profile",
-            &[("name", "Owner"), ("email", "new@example.com")],
+            &[
+                ("name", "Owner"),
+                ("email", "new@example.com"),
+                ("current_password", ADMIN_PASSWORD),
+            ],
         )
         .await;
     assert_eq!(result.status, axum::http::StatusCode::OK);
