@@ -12,6 +12,7 @@ pub const LANGUAGE: Language = Language {
     day_month: "{d} {m}",
     is_singular: singular_if_one,
     translations: &[
+        ("If an older backup has bloogla.db at the top level, move it into the data folder before restarting Bloogla.", "Eski bir yedekte bloogla.db en üst klasördeyse, Bloogla’yı yeniden başlatmadan önce bu dosyayı data klasörüne taşıyın."),
         ("(opened in your browser)", "(tarayıcınızda açıldı)"),
         ("A comment is waiting for approval on “{title}”.", "“{title}” yazısında onay bekleyen bir yorum var."),
         ("Bloogla couldn't continue", "Bloogla devam edemedi"),

@@ -52,11 +52,109 @@ async fn admins_can_download_a_backup() {
     let page = site.get("/admin/backup.zip").await;
     assert_eq!(page.status, StatusCode::OK);
     assert_eq!(page.header("content-type"), "application/zip");
-    assert!(page.body.contains("bloogla.db"), "the database is inside");
+    assert!(
+        page.body.contains("data/bloogla.db"),
+        "the database is inside"
+    );
 
     site.new_visitor();
     assert_eq!(
         site.get("/admin/backup.zip").await.location(),
         "/admin/login"
     );
+}
+
+#[tokio::test]
+async fn an_extracted_backup_restores_the_site_database() {
+    let mut site = TestSite::with_owner().await;
+    site.publish("A Post To Restore", "published").await;
+    let folder = std::env::temp_dir().join(format!(
+        "bloogla-restore-test-{}",
+        crate::app::security::random_hex(8)
+    ));
+    // Keep the test's uploads separate from any real site's pictures.
+    let uploads = folder.join("source-uploads");
+    std::fs::create_dir_all(&uploads).unwrap();
+    std::fs::write(uploads.join("picture.png"), b"test picture").unwrap();
+    let archive = crate::services::backup::download_archive(&site.pool, &uploads)
+        .await
+        .unwrap();
+    let restored = folder.join("restored");
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(&archive).unwrap()).unwrap();
+    zip.extract(&restored).unwrap();
+    drop(zip);
+    std::fs::remove_file(archive).unwrap();
+
+    let relative_database = crate::app::config::Config::default().database_url;
+    let relative_database = relative_database
+        .strip_prefix("sqlite://")
+        .unwrap()
+        .split('?')
+        .next()
+        .unwrap();
+    let database = restored.join(relative_database);
+    assert!(
+        database.is_file(),
+        "startup must find the restored database"
+    );
+    let pool = crate::db::connect(&format!("sqlite://{}?mode=rwc", database.display()))
+        .await
+        .unwrap();
+    let post = crate::db::posts::find_public(&pool, "a-post-to-restore", false)
+        .await
+        .expect("the published post survives restoration");
+    assert_eq!(post.title, "A Post To Restore");
+    assert_eq!(
+        std::fs::read(restored.join("uploads/picture.png")).unwrap(),
+        b"test picture"
+    );
+    pool.close().await;
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[tokio::test]
+async fn an_older_archive_can_be_restored_using_the_admin_instructions() {
+    use std::io::Write;
+    let mut site = TestSite::with_owner().await;
+    let instructions = site.get("/admin/settings").await;
+    assert!(instructions
+        .body
+        .contains("If an older backup has bloogla.db at the top level"));
+    let folder = std::env::temp_dir().join(format!(
+        "bloogla-legacy-restore-{}",
+        crate::app::security::random_hex(8)
+    ));
+    std::fs::create_dir_all(&folder).unwrap();
+    let copy = folder.join("source.db");
+    crate::services::backup::backup_to(&site.pool, &copy)
+        .await
+        .unwrap();
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    zip.start_file("bloogla.db", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    zip.write_all(&std::fs::read(&copy).unwrap()).unwrap();
+    let bytes = zip.finish().unwrap();
+    let restored = folder.join("restored");
+    zip::ZipArchive::new(bytes)
+        .unwrap()
+        .extract(&restored)
+        .unwrap();
+    // Follow the instructions shown for older downloads; no new importer is needed.
+    std::fs::create_dir_all(restored.join("data")).unwrap();
+    std::fs::rename(
+        restored.join("bloogla.db"),
+        restored.join("data/bloogla.db"),
+    )
+    .unwrap();
+    let database = restored.join("data/bloogla.db");
+    let pool = crate::db::connect(&format!("sqlite://{}?mode=rwc", database.display()))
+        .await
+        .unwrap();
+    let email: String = sqlx::query_scalar("SELECT email FROM users LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(email, super::ADMIN_EMAIL);
+    pool.close().await;
+    std::fs::remove_dir_all(folder).unwrap();
 }

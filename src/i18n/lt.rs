@@ -22,6 +22,7 @@ pub const LANGUAGE: Language = Language {
     day_month: "{m} {d} d.",
     is_singular,
     translations: &[
+        ("If an older backup has bloogla.db at the top level, move it into the data folder before restarting Bloogla.", "Jei senesnėje atsarginėje kopijoje failas bloogla.db yra pagrindiniame aplanke, prieš paleisdami Bloogla iš naujo perkelkite jį į data aplanką."),
         ("(opened in your browser)", "(atidaryta jūsų naršyklėje)"),
         ("A comment is waiting for approval on “{title}”.", "Įrašo „{title}“ komentaras laukia patvirtinimo."),
         ("Bloogla couldn't continue", "Bloogla negalėjo tęsti darbo"),

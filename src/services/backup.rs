@@ -101,7 +101,7 @@ fn prune_automatic_backups() {
     }
 }
 
-/// Make a .zip with a fresh copy of the database (`bloogla.db`) and every
+/// Make a .zip with a fresh copy of the database (`data/bloogla.db`) and every
 /// uploaded file (`uploads/...`), and return where it was written.
 ///
 /// The caller sends it and deletes it. Unpacking it into an empty folder
@@ -141,7 +141,8 @@ fn write_archive(database: &Path, uploads: &Path, archive: &Path) -> Result<(), 
         Ok(())
     };
 
-    add("bloogla.db", database)?;
+    // Match the path Bloogla opens at startup after extracting the archive.
+    add("data/bloogla.db", database)?;
     if let Ok(entries) = std::fs::read_dir(uploads) {
         let mut files: Vec<PathBuf> = entries
             .flatten()
