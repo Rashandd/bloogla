@@ -14,10 +14,12 @@
 
 mod badges;
 mod posts;
+mod profile_security;
 mod security;
 mod settings;
 mod setup_and_login;
 mod themes;
+mod two_factor;
 
 use crate::app::config::Config;
 use crate::app::state::AppState;
@@ -87,6 +89,7 @@ impl TestSite {
     pub async fn new() -> Self {
         let turn = ONE_AT_A_TIME.lock().await;
         crate::db::settings::invalidate();
+        crate::app::secrets::init_for_tests();
 
         let database = std::env::temp_dir().join(format!(
             "bloogla-test-{}.db",

@@ -12,6 +12,8 @@ pub const LANGUAGE: Language = Language {
     day_month: "{d} {m}",
     is_singular: singular_if_one,
     translations: &[
+        ("Please sign in again.", "Lütfen yeniden giriş yapın."),
+        ("To change your email, enter your current password.", "E-postanızı değiştirmek için mevcut parolanızı girin."),
         ("(opened in your browser)", "(tarayıcınızda açıldı)"),
         ("A comment is waiting for approval on “{title}”.", "“{title}” yazısında onay bekleyen bir yorum var."),
         ("Bloogla couldn't continue", "Bloogla devam edemedi"),

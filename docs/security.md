@@ -18,3 +18,8 @@ report a vulnerability, see [SECURITY.md](../SECURITY.md).
 - **Sessions:** HTTP-only, same-site cookies (HTTPS-only in production); expired sessions are removed hourly. Changing a password (or an admin resetting it) signs that account out on every other device.
 - **Security log:** Sign-ins, failed sign-ins, password and role changes and new people are logged as `security event=...` lines. Find them with `grep "security event"` in the log (or `docker logs bloogla`).
 - **Dependencies:** CI runs `cargo audit` on every push and weekly, and Dependabot proposes updates.
+
+Changing your email, turning on two-factor login and replacing recovery codes
+require your current password. Turning on two-factor login or replacing recovery
+codes signs out other devices. Authenticator codes are recorded atomically, so
+one code cannot complete two simultaneous sign-ins.

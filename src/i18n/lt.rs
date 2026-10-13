@@ -22,6 +22,8 @@ pub const LANGUAGE: Language = Language {
     day_month: "{m} {d} d.",
     is_singular,
     translations: &[
+        ("Please sign in again.", "Prisijunkite dar kartą."),
+        ("To change your email, enter your current password.", "Norėdami pakeisti el. pašto adresą, įveskite dabartinį slaptažodį."),
         ("(opened in your browser)", "(atidaryta jūsų naršyklėje)"),
         ("A comment is waiting for approval on “{title}”.", "Įrašo „{title}“ komentaras laukia patvirtinimo."),
         ("Bloogla couldn't continue", "Bloogla negalėjo tęsti darbo"),

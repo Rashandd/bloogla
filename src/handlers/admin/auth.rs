@@ -282,8 +282,7 @@ pub async fn check_code(
     let mut accepted = false;
     if let Some((secret, last_step)) = crate::db::users::two_factor(&state.pool, user_id).await {
         if let Some(step) = crate::app::totp::verify(&secret, typed, unix_now(), last_step) {
-            crate::db::users::set_two_factor_step(&state.pool, user_id, step).await;
-            accepted = true;
+            accepted = crate::db::users::set_two_factor_step(&state.pool, user_id, step).await;
         }
     }
     // A recovery code is longer than the six digits from the app.

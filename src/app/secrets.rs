@@ -45,6 +45,11 @@ fn use_key(key: &[u8]) {
     let _ = CIPHER.set(ChaCha20Poly1305::new(Key::from_slice(key)));
 }
 
+#[cfg(test)]
+pub(crate) fn init_for_tests() {
+    use_key(&[7u8; 32]);
+}
+
 /// Write a file only its owner can read.
 fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
     use std::io::Write;
@@ -93,7 +98,7 @@ mod tests {
 
     #[test]
     fn secrets_round_trip_and_detect_tampering() {
-        use_key(&[7u8; 32]);
+        init_for_tests();
         let stored = encrypt("hunter2");
         assert!(stored.starts_with(PREFIX) && !stored.contains("hunter2"));
         assert_ne!(

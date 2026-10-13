@@ -57,7 +57,7 @@ async fn admin_pages_need_signing_in() {
 
     assert_eq!(site.get("/admin/posts").await.location(), "/admin/login");
     let post = site.post("/admin/posts", &[("title", "Sneaky")]).await;
-    assert_eq!(post.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(post.location(), "/admin/login");
 }
 
 #[tokio::test]

@@ -120,9 +120,12 @@ pub async fn require_login(
             req.extensions_mut().insert(user);
             next.run(req).await
         }
-        // Page loads go to the login form; HTMX and form requests get 401.
+        // Expired sessions send both HTMX and ordinary forms back to sign in.
         None if req.method() == Method::GET => Redirect::to("/admin/login").into_response(),
-        None => StatusCode::UNAUTHORIZED.into_response(),
+        None if req.headers().contains_key("hx-request") => {
+            ([("HX-Redirect", "/admin/login")], "").into_response()
+        }
+        None => Redirect::to("/admin/login").into_response(),
     }
 }
 
