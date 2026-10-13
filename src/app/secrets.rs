@@ -25,6 +25,8 @@ static CIPHER: OnceLock<ChaCha20Poly1305> = OnceLock::new();
 pub fn init() -> Result<(), String> {
     let path = Path::new(KEY_FILE);
     let key = if path.exists() {
+        crate::app::private_files::protect_file(path)
+            .map_err(|e| format!("Could not protect {KEY_FILE}: {e}"))?;
         let hex =
             std::fs::read_to_string(path).map_err(|e| format!("Could not read {KEY_FILE}: {e}"))?;
         from_hex(hex.trim())

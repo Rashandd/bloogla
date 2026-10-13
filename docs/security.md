@@ -12,6 +12,7 @@ report a vulnerability, see [SECURITY.md](../SECURITY.md).
 - **Uploads:** Files are checked by content (JPEG, PNG, GIF, WebP only), stored under random names, and photos are resized, stripped of metadata, and get an 800px-wide copy for phones.
 - **Themes:** Only files in a theme's `static/` folder are public; templates and `theme.toml` are not served.
 - **Two-factor login (optional, recommended):** Turn it on in Profile with any authenticator app; you get 10 one-time recovery codes. Nobody is forced to use it. Admins can turn it off for someone who lost their phone, and `bloogla disable-2fa EMAIL` works on the server.
+- **Local files:** On Linux and macOS, databases and backups are readable only by the account running Bloogla (`600`); its `data/` and `data/backups/` folders are private (`700`). Startup also tightens existing files in those locations.
 - **Stored secrets:** The mail server password and two-factor keys are encrypted with a key in `data/secret.key`. Keep that file with your backups; without it you re-enter the mail password and set up two-factor login again.
 - **Setup:** A fresh site can only be set up with the one-time code from the setup link Bloogla prints at start.
 - **Passwords:** At least 12 characters with a lowercase letter, an uppercase letter, a number and a symbol. Forms show what's missing as you type, and the server checks again. Rules live in `src/app/security.rs`.

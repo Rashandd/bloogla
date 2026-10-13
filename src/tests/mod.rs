@@ -14,6 +14,7 @@
 
 mod badges;
 mod posts;
+mod private_files;
 mod security;
 mod settings;
 mod setup_and_login;
