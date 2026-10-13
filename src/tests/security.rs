@@ -60,3 +60,19 @@ async fn admins_can_download_a_backup() {
         "/admin/login"
     );
 }
+
+#[tokio::test]
+async fn reset_pages_keep_their_stricter_referrer_policy() {
+    let mut site = TestSite::with_owner().await;
+    for path in [
+        "/admin/reset-password",
+        "/admin/reset-password?token=invalid",
+    ] {
+        let page = site.get(path).await;
+        assert_eq!(page.header("referrer-policy"), "no-referrer", "{path}");
+    }
+    assert_eq!(
+        site.get("/").await.header("referrer-policy"),
+        "strict-origin-when-cross-origin"
+    );
+}
