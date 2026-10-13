@@ -195,6 +195,25 @@ mod tests {
     }
 
     #[test]
+    fn svg_animation_and_css_payloads_are_not_allowed_in_posts() {
+        // These features need explicit opt-in in ammonia. Keep post HTML from
+        // enabling them, even when the sanitizer dependency changes.
+        for tag in ["animateMotion", "animateTransform", "animateColor"] {
+            let source = format!(
+                r#"<svg><a><{tag} attributeName="href" to="javascript:alert(1)"></{tag}><text>Click</text></a></svg>"#,
+            );
+            let html = to_safe_html(&source);
+            assert!(!html.to_lowercase().contains(&tag.to_lowercase()), "{html}");
+            assert!(!html.contains("javascript:"), "{html}");
+        }
+        let html = to_safe_html(
+            r#"<div style='background:url("cid:\");color:red;background:url(\"cid:")'>Safe text</div>"#,
+        );
+        assert!(!html.contains("style="), "{html}");
+        assert!(html.contains("Safe text"), "{html}");
+    }
+
+    #[test]
     fn scripts_are_removed() {
         let html = to_safe_html("Hi <script>alert(1)</script><img src=x onerror=alert(1)>");
         assert!(!html.contains("<script") && !html.contains("onerror"));
